@@ -1625,6 +1625,10 @@ function markAsDone(headline) {
     doneHeadlines.add(headline);
     localStorage.setItem('done_articles', JSON.stringify(Array.from(doneHeadlines)));
     applyDoneOptimistic(headline);
+    // Re-render shortly after optimistic fade-out so top sections refill from Buffer.
+    setTimeout(() => {
+        renderNews(false);
+    }, 150);
 }
 
 function startNewsAutoRefresh() {
