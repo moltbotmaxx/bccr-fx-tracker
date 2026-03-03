@@ -7,9 +7,7 @@ Lightweight rules to keep the monorepo clean and predictable.
 - Current apps:
   - `daily-tracker`
   - `fx-tracker`
-  - `insta-claws`
-  - `mission-control`
-  - `smart-frame`
+  - `tweet-visualizer`
 
 ## 2) Source of truth
 - Canonical local path:

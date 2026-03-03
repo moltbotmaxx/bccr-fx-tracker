@@ -48,8 +48,8 @@ const SOURCING_FEEDS = [
     {
         id: 'all',
         label: 'ALL',
-        kind: 'news',
-        url: 'https://rss.app/feeds/v1.1/_cj6ytZzuyXMfGkNr.json'
+        kind: 'aggregate',
+        feedIds: ['ai-general', 'anthropic-claude', 'openai-chatgpt', 'robotics']
     },
     {
         id: 'ai-general',
@@ -1105,7 +1105,18 @@ window.addEventListener('beforeunload', () => {
 // ===========================
 function getSelectedFeedConfigs() {
     const selected = SOURCING_FEEDS.find(f => f.id === selectedSourcingFeed);
-    return selected ? [selected] : [SOURCING_FEEDS[0]];
+    const fallback = SOURCING_FEEDS[0];
+    const active = selected || fallback;
+
+    if (active.kind === 'aggregate') {
+        const ids = Array.isArray(active.feedIds) ? active.feedIds : [];
+        const feeds = ids
+            .map(id => SOURCING_FEEDS.find(feed => feed.id === id))
+            .filter(feed => feed?.kind === 'news' && feed.url);
+        return feeds.length ? feeds : SOURCING_FEEDS.filter(feed => feed.kind === 'news' && feed.url);
+    }
+
+    return active?.kind === 'news' && active.url ? [active] : [];
 }
 
 function getFeedSourceLabel(item, fallbackUrl = '') {
@@ -1227,13 +1238,16 @@ async function fetchSourcingFeed(feedConfig, forceRefresh = false) {
 
 async function rebuildSourcingArticles(forceRefresh = false) {
     const selectedFeeds = getSelectedFeedConfigs();
-    const allArticles = [];
+    const feedResults = await Promise.all(
+        selectedFeeds
+            .filter(feed => feed.kind === 'news')
+            .map(async (feed) => ({ items: await fetchSourcingFeed(feed, forceRefresh) }))
+    );
 
-    for (const feed of selectedFeeds) {
-        if (feed.kind !== 'news') continue;
-        const items = await fetchSourcingFeed(feed, forceRefresh);
+    const allArticles = [];
+    feedResults.forEach(({ items }) => {
         items.forEach((item, i) => allArticles.push(normalizeFeedItemToArticle(item, i)));
-    }
+    });
 
     sourcingArticlesCache = dedupeArticlesByLink(allArticles).sort((a, b) => {
         const da = new Date(a.published_at || a.date).getTime();
