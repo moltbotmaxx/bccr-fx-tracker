@@ -1130,6 +1130,141 @@ function getFeedSourceLabel(item, fallbackUrl = '') {
     }
 }
 
+const IG_HOOK_KEYWORDS = [
+    'new', 'launch', 'released', 'breakthrough', 'secret', 'revealed', 'win',
+    'viral', 'trend', 'vs', 'battle', 'future', 'must', 'best', 'top'
+];
+
+const IG_FORMAT_KEYWORDS = [
+    'how to', 'why', 'what', 'explained', 'guide', 'checklist',
+    'tips', 'mistakes', 'lessons', 'strategy', 'roadmap', 'comparison'
+];
+
+const IG_VISUAL_KEYWORDS = [
+    'robot', 'robotics', 'video', 'image', 'photo', 'demo', 'design',
+    'prototype', 'device', 'app', 'ui', 'animation'
+];
+
+const IG_SOURCE_QUALITY = {
+    'theverge.com': 95,
+    'techcrunch.com': 90,
+    'wired.com': 88,
+    'openai.com': 96,
+    'anthropic.com': 96,
+    'googleblog.com': 90,
+    'arstechnica.com': 88,
+    'mit.edu': 92
+};
+
+function countKeywordHits(text, keywords) {
+    const normalized = (text || '').toLowerCase();
+    let hits = 0;
+    keywords.forEach((word) => {
+        if (normalized.includes(word)) hits += 1;
+    });
+    return hits;
+}
+
+function scoreRecency(hoursAgo) {
+    return clampScore(100 - (hoursAgo * 100) / 96);
+}
+
+function scoreHookPotential(headline) {
+    const hits = countKeywordHits(headline, IG_HOOK_KEYWORDS);
+    const hasNumber = /\b\d+\b/.test(headline);
+    const hasQuestion = /\?/.test(headline);
+    const bonus = (hasNumber ? 10 : 0) + (hasQuestion ? 8 : 0);
+    return clampScore(hits * 10 + bonus + 35);
+}
+
+function scoreFormatPotential(headline) {
+    const text = (headline || '').toLowerCase();
+    const hits = countKeywordHits(text, IG_FORMAT_KEYWORDS);
+    const hasVs = /\bvs\b/.test(text);
+    const hasListShape = /\b\d+\s*(ways|steps|tips|lessons|reasons)\b/.test(text);
+    return clampScore(hits * 14 + (hasVs ? 14 : 0) + (hasListShape ? 20 : 0) + 20);
+}
+
+function scoreVisualPotential(headline, hasImage) {
+    const hits = countKeywordHits(headline, IG_VISUAL_KEYWORDS);
+    const imageBonus = hasImage ? 45 : 10;
+    return clampScore(imageBonus + hits * 9);
+}
+
+function scoreHeadlineClarity(headline) {
+    const length = (headline || '').trim().length;
+    if (length === 0) return 0;
+    if (length >= 45 && length <= 95) return 95;
+    if (length >= 30 && length < 45) return 78;
+    if (length > 95 && length <= 125) return 72;
+    return 55;
+}
+
+function scoreSourceQuality(link) {
+    let host = '';
+    try {
+        host = new URL(link).hostname.replace('www.', '').toLowerCase();
+    } catch {
+        host = '';
+    }
+    if (!host) return 60;
+    return IG_SOURCE_QUALITY[host] || 70;
+}
+
+function buildInstagramRanking(item, index = 0) {
+    const headline = decodeEntities(item?.title || 'Untitled');
+    const link = safeHttpUrl(item?.url || '');
+    const imageUrl = safeHttpUrl(item?.image || item?.attachments?.[0]?.url || '', '');
+    const hasImage = Boolean(imageUrl);
+    const publishedAt = item?.date_published || item?.date_modified || new Date().toISOString();
+    const hoursAgo = Math.max(0, (Date.now() - new Date(publishedAt).getTime()) / (1000 * 60 * 60));
+
+    const recency = scoreRecency(hoursAgo);
+    const hook = scoreHookPotential(headline);
+    const format = scoreFormatPotential(headline);
+    const visual = scoreVisualPotential(headline, hasImage);
+    const clarity = scoreHeadlineClarity(headline);
+    const sourceQuality = scoreSourceQuality(link);
+
+    const ranking = clampScore(
+        recency * 0.35 +
+        hook * 0.2 +
+        format * 0.15 +
+        visual * 0.15 +
+        clarity * 0.1 +
+        sourceQuality * 0.05 -
+        index * 0.15
+    );
+
+    const virality = clampScore(
+        hook * 0.45 +
+        visual * 0.3 +
+        format * 0.15 +
+        recency * 0.1
+    );
+
+    const fit = clampScore(
+        clarity * 0.35 +
+        sourceQuality * 0.3 +
+        format * 0.2 +
+        recency * 0.15
+    );
+
+    return {
+        ranking,
+        virality,
+        fit,
+        details: { recency, hook, format, visual, clarity, sourceQuality }
+    };
+}
+
+function buildRankingReason(existingReason, rankingDetails) {
+    const base = normalizeWhitespace(existingReason || '');
+    const detail = `IG fit: R${rankingDetails.recency} H${rankingDetails.hook} F${rankingDetails.format} V${rankingDetails.visual}`;
+    if (!base) return detail;
+    return `${base.slice(0, 155)} • ${detail}`.slice(0, 220);
+}
+
 function normalizeFeedItemToArticle(item, index = 0) {
     const link = safeHttpUrl(item?.url || '');
     const publishedAt = item?.date_published || item?.date_modified || new Date().toISOString();
@@ -1138,10 +1273,7 @@ function normalizeFeedItemToArticle(item, index = 0) {
     const reason = normalizeWhitespace(item?.content_text || '').slice(0, 220);
     const source = getFeedSourceLabel(item, link);
     const imageUrl = safeHttpUrl(item?.image || item?.attachments?.[0]?.url || '', '');
-    const now = Date.now();
-    const hoursAgo = Math.max(0, (now - new Date(publishedAt).getTime()) / (1000 * 60 * 60));
-    const recencyScore = Math.max(0, Math.round(100 - hoursAgo * 2));
-    const ranking = clampScore(recencyScore - Math.round(index / 2));
+    const igScores = buildInstagramRanking(item, index);
 
     return {
         headline,
@@ -1149,11 +1281,11 @@ function normalizeFeedItemToArticle(item, index = 0) {
         source,
         date: publishedDate,
         published_at: publishedAt,
-        ranking,
-        rating: ranking,
-        virality: clampScore(Math.round(ranking * 0.78)),
-        fit: clampScore(Math.round(ranking * 0.72)),
-        reason: reason || 'Imported from RSS feed.',
+        ranking: igScores.ranking,
+        rating: igScores.ranking,
+        virality: igScores.virality,
+        fit: igScores.fit,
+        reason: buildRankingReason(reason, igScores.details),
         image_url: imageUrl
     };
 }
@@ -1250,6 +1382,7 @@ async function rebuildSourcingArticles(forceRefresh = false) {
     });
 
     sourcingArticlesCache = dedupeArticlesByLink(allArticles).sort((a, b) => {
+        if ((b.ranking || 0) !== (a.ranking || 0)) return (b.ranking || 0) - (a.ranking || 0);
         const da = new Date(a.published_at || a.date).getTime();
         const db = new Date(b.published_at || b.date).getTime();
         return db - da;
