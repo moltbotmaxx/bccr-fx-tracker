@@ -1130,19 +1130,32 @@ function getFeedSourceLabel(item, fallbackUrl = '') {
     }
 }
 
-const IG_HOOK_KEYWORDS = [
-    'new', 'launch', 'released', 'breakthrough', 'secret', 'revealed', 'win',
-    'viral', 'trend', 'vs', 'battle', 'future', 'must', 'best', 'top'
+const IG_POWER_WORDS = [
+    'secret', 'cheat sheet', 'hack', 'workflow', 'hidden', 'must-know',
+    'best', 'top', 'only', 'breakthrough', 'revealed'
 ];
 
-const IG_FORMAT_KEYWORDS = [
-    'how to', 'why', 'what', 'explained', 'guide', 'checklist',
-    'tips', 'mistakes', 'lessons', 'strategy', 'roadmap', 'comparison'
+const IG_ACTION_TRIGGERS = [
+    'comment', 'save this', 'don\'t miss out', 'dm', 'keyword', 'template', 'free'
+];
+
+const IG_TECH_TERMS = [
+    'prompt engineering', 'prompt', 'ai workflow', 'llm', 'productivity', 'growth',
+    'chatgpt', 'claude', 'openai', 'anthropic', 'automation'
+];
+
+const IG_URGENCY_WORDS = [
+    'moving fast', 'stay ahead', 'ahead of the curve', 'left behind', 'now', 'today'
+];
+
+const IG_SAVEABLE_KEYWORDS = [
+    'top', 'tips', 'steps', 'ways', 'guide', 'checklist', 'framework',
+    'mistakes', 'lessons', 'examples'
 ];
 
 const IG_VISUAL_KEYWORDS = [
-    'robot', 'robotics', 'video', 'image', 'photo', 'demo', 'design',
-    'prototype', 'device', 'app', 'ui', 'animation'
+    'video', 'image', 'photo', 'demo', 'design', 'prototype',
+    'device', 'app', 'ui', 'animation', 'before and after'
 ];
 
 const IG_SOURCE_QUALITY = {
@@ -1170,19 +1183,34 @@ function scoreRecency(hoursAgo) {
 }
 
 function scoreHookPotential(headline) {
-    const hits = countKeywordHits(headline, IG_HOOK_KEYWORDS);
+    const hits = countKeywordHits(headline, IG_POWER_WORDS);
+    const urgencyHits = countKeywordHits(headline, IG_URGENCY_WORDS);
     const hasNumber = /\b\d+\b/.test(headline);
     const hasQuestion = /\?/.test(headline);
     const bonus = (hasNumber ? 10 : 0) + (hasQuestion ? 8 : 0);
-    return clampScore(hits * 10 + bonus + 35);
+    return clampScore(hits * 10 + urgencyHits * 12 + bonus + 28);
 }
 
-function scoreFormatPotential(headline) {
-    const text = (headline || '').toLowerCase();
-    const hits = countKeywordHits(text, IG_FORMAT_KEYWORDS);
-    const hasVs = /\bvs\b/.test(text);
-    const hasListShape = /\b\d+\s*(ways|steps|tips|lessons|reasons)\b/.test(text);
-    return clampScore(hits * 14 + (hasVs ? 14 : 0) + (hasListShape ? 20 : 0) + 20);
+function scorePracticalValue(headline, reason) {
+    const text = `${headline || ''} ${reason || ''}`.toLowerCase();
+    const techHits = countKeywordHits(text, IG_TECH_TERMS);
+    const actionableHits = countKeywordHits(text, ['how to', 'template', 'prompt', 'workflow', 'step-by-step']);
+    return clampScore(techHits * 12 + actionableHits * 14 + 24);
+}
+
+function scoreSaveability(headline, reason) {
+    const text = `${headline || ''} ${reason || ''}`.toLowerCase();
+    const hits = countKeywordHits(text, IG_SAVEABLE_KEYWORDS);
+    const hasListShape = /\b\d+\s*(ways|steps|tips|lessons|reasons|tools)\b/.test(text);
+    const hasChecklist = /\b(checklist|framework|template)\b/.test(text);
+    return clampScore(hits * 10 + (hasListShape ? 20 : 0) + (hasChecklist ? 18 : 0) + 20);
+}
+
+function scoreActionTriggerPotential(headline, reason) {
+    const text = `${headline || ''} ${reason || ''}`.toLowerCase();
+    const hits = countKeywordHits(text, IG_ACTION_TRIGGERS);
+    const commentKeywordPattern = /\bcomment\s+[a-z0-9_-]{3,}\b/.test(text);
+    return clampScore(hits * 14 + (commentKeywordPattern ? 18 : 0) + 20);
 }
 
 function scoreVisualPotential(headline, hasImage) {
@@ -1214,6 +1242,7 @@ function scoreSourceQuality(link) {
 function buildInstagramRanking(item, index = 0) {
     const headline = decodeEntities(item?.title || 'Untitled');
     const link = safeHttpUrl(item?.url || '');
+    const reason = normalizeWhitespace(item?.content_text || '').slice(0, 220);
     const imageUrl = safeHttpUrl(item?.image || item?.attachments?.[0]?.url || '', '');
     const hasImage = Boolean(imageUrl);
     const publishedAt = item?.date_published || item?.date_modified || new Date().toISOString();
@@ -1221,32 +1250,37 @@ function buildInstagramRanking(item, index = 0) {
 
     const recency = scoreRecency(hoursAgo);
     const hook = scoreHookPotential(headline);
-    const format = scoreFormatPotential(headline);
+    const practical = scorePracticalValue(headline, reason);
+    const saveability = scoreSaveability(headline, reason);
+    const cta = scoreActionTriggerPotential(headline, reason);
     const visual = scoreVisualPotential(headline, hasImage);
     const clarity = scoreHeadlineClarity(headline);
     const sourceQuality = scoreSourceQuality(link);
 
     const ranking = clampScore(
-        recency * 0.35 +
+        recency * 0.22 +
         hook * 0.2 +
-        format * 0.15 +
-        visual * 0.15 +
-        clarity * 0.1 +
+        practical * 0.2 +
+        saveability * 0.15 +
+        cta * 0.12 +
+        visual * 0.1 +
+        clarity * 0.08 +
         sourceQuality * 0.05 -
         index * 0.15
     );
 
     const virality = clampScore(
-        hook * 0.45 +
-        visual * 0.3 +
-        format * 0.15 +
-        recency * 0.1
+        hook * 0.35 +
+        cta * 0.25 +
+        saveability * 0.2 +
+        visual * 0.15 +
+        recency * 0.05
     );
 
     const fit = clampScore(
-        clarity * 0.35 +
-        sourceQuality * 0.3 +
-        format * 0.2 +
+        practical * 0.35 +
+        clarity * 0.25 +
+        sourceQuality * 0.25 +
         recency * 0.15
     );
 
@@ -1254,13 +1288,13 @@ function buildInstagramRanking(item, index = 0) {
         ranking,
         virality,
         fit,
-        details: { recency, hook, format, visual, clarity, sourceQuality }
+        details: { recency, hook, practical, saveability, cta, visual, clarity, sourceQuality }
     };
 }
 
 function buildRankingReason(existingReason, rankingDetails) {
     const base = normalizeWhitespace(existingReason || '');
-    const detail = `IG fit: R${rankingDetails.recency} H${rankingDetails.hook} F${rankingDetails.format} V${rankingDetails.visual}`;
+    const detail = `IG fit: H${rankingDetails.hook} P${rankingDetails.practical} S${rankingDetails.saveability} C${rankingDetails.cta}`;
     if (!base) return detail;
     return `${base.slice(0, 155)} • ${detail}`.slice(0, 220);
 }
